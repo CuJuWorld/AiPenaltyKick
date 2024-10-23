@@ -1,0 +1,11 @@
+functions-framework==3.*
+
+firebase-admin
+
+google-cloud-aiplatform
+pillow
+
+opencv-python
+numpy
+tensorflow
+scipy
