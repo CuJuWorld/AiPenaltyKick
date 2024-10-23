@@ -87,4 +87,3 @@ To use the APSX platform:
 * Configure your environment variables and file paths appropriately in the code. 
 * Adjust model paths, confidence thresholds, and other parameters to optimize performance and accuracy for your specific use case. 
 * Consider implementing additional analysis features and visualizations to enhance the functionality of the platform. 
-```
