@@ -1,0 +1,8 @@
+functions-framework==3.*
+firebase-admin==6.2.0
+opencv-python-headless==4.8.0.74
+tensorflow==2.13.0
+google-cloud-storage==2.9.0
+matplotlib
+numpy
+google-cloud-aiplatform
