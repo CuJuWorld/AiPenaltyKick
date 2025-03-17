@@ -45,6 +45,7 @@ class Accuracy_Analyser():
 
         # Initialize TensorFlow object detection model
         self.tf_model = tf.saved_model.load('path/to/tensorflow/model')  # Replace with the path to your TensorFlow model
+        # Local path: 'path/to/tensorflow/model'
 
     
     def analyse(self, gs_file_name, targets=[[0.1,0.1], [0.9,0.1]], event_id = None, debug=False):
@@ -60,6 +61,7 @@ class Accuracy_Analyser():
         # get video frames         
         video_frames = APSX_Video_Processor.get_frames_from_video(local_file_name, self.every_nth_frame, self.frame_shape)
         # video_frames = APSX_Video_Processor.get_raw_frames_from_video(local_file_name, self.every_nth_frame)
+        # Local path: 'local_file_name'
 
         # predict on each frame
         predictions = self.ball_predictor.predict_on_frames(video_frames, threshold=self.confidence_threshold)
@@ -78,6 +80,7 @@ class Accuracy_Analyser():
         # goal_frame = APSX_Video_Processor.resize_frame(video_frames[len(video_frames)//2], 
         #                                                    resize_shape=(512, 512))
         # goal_frame = goal_frame.astype(np.uint8)
+        # Local path: 'goal_frame'
         goal_frame = video_frames[len(video_frames)//2]
         goal_position = self.predict_goal_position(goal_frame, debug=debug)
         
