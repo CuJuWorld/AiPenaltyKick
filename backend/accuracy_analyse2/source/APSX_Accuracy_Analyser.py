@@ -1,7 +1,9 @@
-
 import math
 import numpy as np
 import matplotlib.pyplot as plt
+import tensorflow as tf
+import cv2
+from ultralytics import YOLO  # Import YOLO from Ultralytics
 
 import APSX_Object_Tracker 
 import APSX_Predictor  
@@ -13,27 +15,36 @@ import APSX_Event_Info_Helper
 
 event_info_helper = APSX_Event_Info_Helper.APSX_Event_Info_Helper()
 
-
-
-
 class Accuracy_Analyser():
     
-    def __init__(self, ball_model_path, goal_model_path, bins_model_path, every_nth_frame=5, confidence_threshold=0.5):
+    def __init__(self, ball_model_path, goal_model_path, bins_model_path, 
+                 kick_power_model_path=None, accuracy_model_path=None, # Add paths to your regression models
+                 every_nth_frame=5, confidence_threshold=0.5):
         
-        # ball_model_path = "goal_ball_top-_bins_low_latency_model-6531246403547561984_tflite_2023-09-23T08_35_54.085987Z_model.tflite"
-        self.ball_predictor = APSX_Predictor.Predictor(ball_model_path)
-        self.goal_predictor = APSX_Predictor.Predictor(goal_model_path)
-        self.bins_predictor = APSX_Predictor.Predictor(bins_model_path)
-        print('✅ Models loaded')
-        
-        self.ball_tracker = None
-        
-        self.every_nth_frame = every_nth_frame
-        
+        self.ball_model = tf.lite.Interpreter(model_path=ball_model_path)
+        self.goal_model = tf.lite.Interpreter(model_path=goal_model_path)
+        self.bins_model = tf.lite.Interpreter(model_path=bins_model_path)
+
+        self.ball_model.allocate_tensors()
+        self.goal_model.allocate_tensors()
+        self.bins_model.allocate_tensors()
+
+        # Load regression models if provided
+        if kick_power_model_path and accuracy_model_path:
+            self.kick_power_model = tf.saved_model.load(kick_power_model_path)
+            self.accuracy_model = tf.saved_model.load(accuracy_model_path)
+
         self.confidence_threshold = confidence_threshold
-        
+        self.ball_tracker = None
+        self.every_nth_frame = every_nth_frame
         self.seconds_between_frames = 1/240
         self.frame_shape = (192, 192)
+
+        # Initialize YOLO model
+        self.yolo_model = YOLO('yolov5s.pt')  # Replace with the path to your YOLO model
+
+        # Initialize TensorFlow object detection model
+        self.tf_model = tf.saved_model.load('path/to/tensorflow/model')  # Replace with the path to your TensorFlow model
 
     
     def analyse(self, gs_file_name, targets=[[0.1,0.1], [0.9,0.1]], event_id = None, debug=False):
@@ -89,13 +100,16 @@ class Accuracy_Analyser():
         '''
         Predict where the bins are in frame, return the normalised bbox
         '''
-        confidence_scores ,bboxes = self.bins_predictor.predict(frame) 
+        results = self.yolo_model(frame)  # Use YOLO model for prediction
+        bboxes = results.xyxy[0].numpy()  # Extract bounding boxes
+        confidence_scores = results.xyxy[0][:, 4].numpy()  # Extract confidence scores
+
         highest_confidence_indexes = self.top_n_argmax(confidence_scores, 2)
         bins_bboxes = bboxes[highest_confidence_indexes]
         
         print('🗑️ bins detected,', bins_bboxes)
         
-        if debug :
+        if debug:
             fig, ax = plt.subplots(1)
             plt.title('bins position prediction')
             ax.imshow(frame)
@@ -103,8 +117,7 @@ class Accuracy_Analyser():
             height, width, _ = frame.shape
             
             for bbox in bins_bboxes:
-
-                ymin, xmin, ymax, xmax  = bbox
+                ymin, xmin, ymax, xmax = bbox[:4]
 
                 # Convert normalized coordinates to pixel values
                 xmin = int(xmin * width)
@@ -130,38 +143,44 @@ class Accuracy_Analyser():
         '''
         Predict where the goal is in frame, return the normalised bbox
         '''
-        confidence_scores ,bboxes = self.goal_predictor.predict(frame) 
+        input_details = self.goal_model.get_input_details()
+        output_details = self.goal_model.get_output_details()
+
+        input_data = cv2.resize(frame, (input_details[0]['shape'][2], input_details[0]['shape'][1]))
+        input_data = np.expand_dims(input_data, axis=0)
+        input_data = (np.float32(input_data) - 127.5) / 127.5
+
+        self.goal_model.set_tensor(input_details[0]['index'], input_data)
+        self.goal_model.invoke()
+
+        output_data = self.goal_model.get_tensor(output_details[0]['index'])
+        confidence_scores = output_data[..., 4]
         highest_confidence_index = np.argmax(confidence_scores)
-        goal_bbox = bboxes[highest_confidence_index]
-        
-        if debug :
-            fig, ax = plt.subplots(1)
-            plt.title('goal position prediction')
-            ax.imshow(frame)
-            
-            height, width, _ = frame.shape
+        goal_bbox = output_data[0][highest_confidence_index][:4]
 
-            ymin, xmin, ymax, xmax  = goal_bbox
+        height, width, _ = frame.shape
+        ymin, xmin, ymax, xmax = goal_bbox
+        xmin /= width
+        ymin /= height
+        xmax /= width
+        ymax /= height
+        goal_bbox = [ymin, xmin, ymax, xmax]
 
-            # Convert normalized coordinates to pixel values
-            xmin = int(xmin * width)
-            ymin = int(ymin * height)
-            xmax = int(xmax * width)
-            ymax = int(ymax * height)
+        if debug:
+            # ...existing debug code...
+            pass
 
-            # Calculate the box width and height
-            box_width = xmax - xmin
-            box_height = ymax - ymin
-
-            # Create a Rectangle patch
-            rect = plt.Rectangle((xmin, ymin), box_width, box_height, linewidth=3, edgecolor='r', facecolor='none')
-            
-            # Add the patch to the axes
-            ax.add_patch(rect)
-            plt.show()
-        
         return goal_bbox
-    
+
+    def extract_features(self, frame, ball_bbox, goal_bbox, bin_bboxes):
+        """
+        Extract features from the frame and bounding boxes.
+        """
+        # Calculate ball speed, angle to goal, relative positions, etc.
+        # ... (Implementation details) ...
+        features = [] # Replace with your actual features
+        return features
+
     def calculate_accuracy(self, ball_track, targets, goal_pos, bin_positions, action_id, speed_threshold = 0.03, delta_direction_threshold = 2, debug=False, debug_frames=None):
          
         if ball_track is None:
@@ -184,7 +203,7 @@ class Accuracy_Analyser():
         if debug:
             plt.title('midpoints')
             plt.plot([x for x,y in midpoints], [y for x,y in midpoints])
-            plt.scatter([x for x,y in midpoints], [y for x,y in midpoints], c=list(range(len(midpoints))))
+            plt.scatter([x for x,y in midpoints], c=list(range(len(midpoints))))
             plt.xlim(0,1)
             plt.ylim(1,0)
             plt.show()
@@ -276,22 +295,6 @@ class Accuracy_Analyser():
         
         denormalised_targets = [self.denormalize_point(t, goal_pos) for t in targets]
         
-        
-#         import pickle
-
-#         # Create the object to be pickled
-#         obj = {'frames': debug_frames,
-#                "ball_track":ball_track,
-#                "impact_index":impact_index,
-#                "goal_pos":goal_pos, 
-#                'targets':targets}
-
-#         # Open the file to pickle the object to
-#         with open("accracy_plot_data2.pickle", "wb") as f:
-#             pickle.dump(obj, f)
-        
-        
-        
         accuracy_plot_file_name = "accuracy_plot.png"
         APSX_Plotter.plot_accuracy_plot(debug_frames, ball_track, impact_index+kick_impulse_index, 
                                         goal_pos, bin_positions, accuracy_plot_file_name)
@@ -356,14 +359,23 @@ class Accuracy_Analyser():
         # get ball path data         
         ball_path = [{'x':m[0], 'y':m[1]} for m in midpoints]
         
+        # Extract features
+        features = self.extract_features(debug_frames[impact_index], ball_track.boxes[impact_index], goal_pos, bin_positions)
+
+        # Predict kick power and accuracy if models are loaded
+        if hasattr(self, 'kick_power_model') and hasattr(self, 'accuracy_model'):
+            kick_power = self.kick_power_model.predict([features])[0]
+            accuracy = self.accuracy_model.predict([features])[0]
+
         metadata = {'raw_impact_point':impact_point, 
                     'raw_distance': normed_closest_distance_to_boxes,
                     'raw_score': normed_closest_distance_to_boxes,
                     'goal_impact_point': normalised_imapact_on_goal,
                     'goal_position': goal_pos.tolist(),
-                    # 'path_points': ball_path, 
                     'impact_time_seconds': impact_time ,
-                    'accuracy_plot': accuracy_plot_gsl }
+                    'accuracy_plot': accuracy_plot_gsl,
+                    'kick_power': kick_power if hasattr(self, 'kick_power_model') else None,
+                    'accuracy': accuracy if hasattr(self, 'accuracy_model') else None }
         
         return score, metadata
     
@@ -482,4 +494,4 @@ class Accuracy_Analyser():
         y = normalized_y * (ymax - ymin) + ymin
 
         return x, y
-    
+
